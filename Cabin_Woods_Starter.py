@@ -72,6 +72,8 @@ isDayTime = True
 
 stars = Group()
 
+
+
 def onMousePress(mouseX,mouseY):
     
     global isDayTime
