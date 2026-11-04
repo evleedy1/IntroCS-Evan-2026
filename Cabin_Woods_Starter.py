@@ -1,12 +1,9 @@
+#Evan
+
 from cmu_graphics import *
 
+time = 0
 
-# CABIN IN THE WOODS - STARTER CODE
-# Canvas coordinates run from 0 to 400 in both directions.
-app.width = 400
-app.height = 400
-
-# The background objects are named so you can change them later.
 
 #sky = Rect(0, 0, 400, 275, fill='skyBlue')
 app.background = 'skyBlue'
@@ -38,10 +35,27 @@ Line(165, 315, 325, 315, fill='saddleBrown', lineWidth=2)
 Polygon(150, 226, 194, 181, 297, 181, 340, 226,fill='maroon', border='black', borderWidth=2)
 
 # Draw chimney AFTER the roof so it appears on top.
-Rect(280, 175, 27, 57, fill='fireBrick', border='black', borderWidth=2)
+chimney = Rect(280, 175, 27, 57, fill='fireBrick', border='black', borderWidth=2)
 Line(280, 195, 307, 195, fill='black')
 Line(280, 214, 307, 214, fill='black')
 
+#windows
+windows = Group(
+Rect(270,240,35,30,border = 'black'),
+Rect(180,240,35,30,border = 'black')
+)
+
+#smoke
+smoke = Group(
+    Circle(293,160,15,fill = 'grey'), 
+    Circle(300,140,10,fill = 'grey'),
+    Circle(290,125,13,fill = 'grey'), 
+)
+smoke.visible = False
+
+# door
+door = Rect(225,265,35,65,fill = 'maroon',border = 'black')
+doorKnob = Circle(255,300,3,fill = 'gold')
 # Example helper: draw a fish at the mouse position.
 def makeFish(mouseX, mouseY):
     return Group(
@@ -58,17 +72,10 @@ def makeCloud(x,y):
     Oval(x - 7, y + 6,30,10,fill = 'white')
     )
 
-# YOUR CODE STARTS HERE.
-# 1. Create the windows and door as named objects.
-# 2. Create a sun, moon, and smoke (use .visible to show/hide).
-# 3. Create state variables to remember day/night, lights, door, fire.
-# 4. Write onMousePress(mouseX, mouseY) using coordinate ranges.
-#    Call makeFish(mouseX, mouseY) when the lake is clicked.
-#    Important: check the corner controls BEFORE the general sky area.
 
 skyCircle = Circle(350,30,25,fill = 'yellow')
 
-isDayTime = True
+isDayTime = False
 
 stars = Group()
 
@@ -79,30 +86,81 @@ def onMousePress(mouseX,mouseY):
     global isDayTime
     global skyCircle
     global stars
-    
-    # day/night
+    '''
+    # control day/night
     if (mouseX >= 350 and mouseY >= 350):
         if (isDayTime):
-            app.background = 'black'
-            skyCircle.fill = 'lightCyan'
-            stars.visible = True
             isDayTime = False
         else:
             app.background = 'skyBlue'
             skyCircle.fill = 'Yellow'
             stars.visible = False
             isDayTime = True
+    '''
+            
     #clouds/stars
     if (mouseY < 275 and mouseX < 300):
-        if (isDayTime):
+        if (not isDayTime):
             cloud = makeCloud(mouseX,mouseY)
             cloud.toBack() # send to back so it can be behind mountains
         else:
             star = Star(mouseX,mouseY,10,5,fill = 'lightYellow')
-            star.toBack()
             stars.add(star)
+            stars.toBack()
     if(pond.hits(mouseX,mouseY)):
         makeFish(mouseX,mouseY)
+    
+    #Windows day/night
+    if(isDayTime): # is it night?
+        if (windows.contains(mouseX,mouseY)): # did the user click on the windows?
+            windows.toFront()
+            if (windows.fill == 'black'): # if the lights are off turn them on
+                windows.fill = 'yellow'
+            else: # otherwise turn them off
+                windows.fill = 'black'
+    else: # turn lights off if its day
+        windows.fill = 'black'
         
-
+    #chimney/smoke
+    if(chimney.contains(mouseX,mouseY)):
+        if(not windows.fill == 'black'):
+            if (smoke.visible):
+                smoke.visible = False
+            else:
+                smoke.visible = True
+                
+    # door open/close
+    if(door.contains(mouseX,mouseY)):
+        if (door.fill == 'black'):
+            door.fill = 'maroon'
+            doorKnob.visible = True
+        else:
+            door.fill = 'black'
+            doorKnob.visible = False
+    
+    
+def onStep():
+    global time
+    global isDayTime
+    
+    time += 1
+    
+    skyCircle.centerX,skyCircle.centerY = getPointInDir(200,600,(-time/12) + 23,550)
+    
+    if(skyCircle.centerX <= 0):
+        time = 0
+        if (isDayTime):
+            isDayTime = False
+        else:
+            isDayTime = True
+            
+    if (isDayTime):
+        app.background = 'black'
+        skyCircle.fill = 'lightCyan'
+        stars.visible = True
+    else:
+        app.background = 'skyBlue'
+        skyCircle.fill = 'Yellow'
+        stars.visible = False
+    
 cmu_graphics.loop()
