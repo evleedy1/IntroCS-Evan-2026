@@ -19,12 +19,20 @@ Rect(0, 275, 400, 125, fill='forestGreen')
 pond = Oval(40, 385, 240, 135, fill='dodgerBlue', border='navy', borderWidth=2)
 
 # Pine trees
-Rect(35, 240, 16, 65, fill='saddleBrown')
+trees = [
+Group(
+Rect(35, 240, 16, 65, fill='saddleBrown'),
 Polygon(43, 140, 8, 245, 78, 245, fill='darkGreen', border='black')
-Rect(102, 250, 14, 48, fill='saddleBrown')
+),
+Group(
+Rect(102, 250, 14, 48, fill='saddleBrown'),
 Polygon(109, 165, 75, 265, 144, 265, fill='darkGreen', border='black')
-Rect(363, 245, 14, 62, fill='saddleBrown')
+),
+Group(
+Rect(363, 245, 14, 62, fill='saddleBrown'),
 Polygon(370, 145, 330, 255, 399, 255, fill='darkGreen', border='black')
+)
+]
 
 # Cabin body, roof, and chimney are already drawn.
 Rect(165, 224, 160, 105, fill='peru', border='black', borderWidth=2)
@@ -71,16 +79,47 @@ def makeCloud(x,y):
     Circle(x - 9,y,7,fill = 'white'),
     Oval(x - 7, y + 6,30,10,fill = 'white')
     )
+def makeSplash(x,y):
+    return Polygon(x+10,y,x+15,y-5,x+3,y-3,x-6,y-12,x-15,y-5,x-10,y,fill = 'dodgerBlue',border = 'skyBlue')
+    
+'''
+a few helper functions
+'''
+def hideAllInList(items):
+    for item in items:
+        item.visible = False
+    return items
 
+def showAllInList(items):
+    for item in items:
+        item.visible = True
+    return items
 
+def clamp(val,mn,mx):
+    if (val > mx):
+        return mx
+    elif (val < mn):
+        return mn
+    else:
+        return val
+    
+    
 skyCircle = Circle(350,30,25,fill = 'yellow')
 
 isDayTime = False
 
-stars = Group()
+stars = list()
 
+clouds = list()
 
+fishes = list()
 
+splashes = list()
+
+colors = ('lightYellow','aliceBlue','ivory','lavenderBlush','honeyDew')
+            
+
+            
 def onMousePress(mouseX,mouseY):
     
     global isDayTime
@@ -99,16 +138,21 @@ def onMousePress(mouseX,mouseY):
     '''
             
     #clouds/stars
-    if (mouseY < 275 and mouseX < 300):
+    if (mouseY < 275):
         if (not isDayTime):
             cloud = makeCloud(mouseX,mouseY)
             cloud.toBack() # send to back so it can be behind mountains
+            clouds.append(cloud)
         else:
-            star = Star(mouseX,mouseY,10,5,fill = 'lightYellow')
-            stars.add(star)
-            stars.toBack()
+            star = Star(mouseX,mouseY,6,5,fill = choice(colors))
+            star.toBack()
+            star.time = 0
+            stars.append(star)
+            
     if(pond.hits(mouseX,mouseY)):
-        makeFish(mouseX,mouseY)
+        fish = makeFish(mouseX,mouseY)
+        fish.lifeTime = 50
+        fishes.append(fish)
     
     #Windows day/night
     if(isDayTime): # is it night?
@@ -142,7 +186,7 @@ def onMousePress(mouseX,mouseY):
 def onStep():
     global time
     global isDayTime
-    
+    #global clouds
     time += 1
     
     skyCircle.centerX,skyCircle.centerY = getPointInDir(200,600,(-time/12) + 23,550)
@@ -157,10 +201,42 @@ def onStep():
     if (isDayTime):
         app.background = 'black'
         skyCircle.fill = 'lightCyan'
-        stars.visible = True
+        showAllInList(stars)
     else:
         app.background = 'skyBlue'
         skyCircle.fill = 'Yellow'
-        stars.visible = False
+        hideAllInList(stars)
+    
+    for tree in trees:
+        tree.rotateAngle = dsin(time)*2
+        
+    for cloud in clouds:
+        cloud.centerX -= 0.1
+        
+    for star in stars:
+        star.opacity = clamp((abs(dsin(star.time)) + .5) * 50,0,100)
+        star.time += 2
+        
+    for fish in fishes:
+        if (fish.lifeTime ==0):
+            fish.visible = False
+            fish.lifeTime = -1
+            splash = makeSplash(fish.centerX,fish.centerY)
+            splash.lifeTime = 10
+            splashes.append(splash)
+            
+        else:
+            fish.centerY += dsin(fish.lifeTime*10)/5
+            fish.lifeTime -= 1
+            
+    for splash in splashes:
+        if (splash.lifeTime == 0):
+            splash.visible = False
+            splash.lifeTime = -1
+            
+        elif (splash.lifeTime >= 1):
+            splash.centerY += 0.1
+            splash.lifeTime -= 1
+            
     
 cmu_graphics.loop()
