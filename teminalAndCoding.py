@@ -50,7 +50,7 @@ pc = 0
 # max steps before infinte loop is assumed
 maxSteps = 30000
 
-waitingOnInput = False
+waitingForInput = False
 userInput = None
 
 '''
@@ -66,8 +66,13 @@ def readSent(sentLine):
     
     if (sentLine == ''): #if the sent line is blank just return
         return
-    if (waitingForInput)
+    if (waitingForInput):
         userInput = sentLine
+        pc -= 1
+        error = runProgram()
+        println('Enter a Value')
+        
+        return
     if (sentLine[0] in numbers): # if we are saving a line to the program
         
         i = 1
@@ -88,6 +93,8 @@ def readSent(sentLine):
             pc = 0
             error = runProgram() #call runProgram and get the result
             println('exited with error ' + str(error)) # print to the console
+            print(waitingForInput)
+            return
             
         elif(command[0] == 'inspect'): # read code that has already been saved
             println('')
@@ -102,9 +109,11 @@ def readSent(sentLine):
         elif(command[0] == 'clear'): # clears the console
             for i in range(25): # fill console with newlines
                 newLine()
+                
         elif(command[0] == 'clearPRG'): # clear the program
             for j in range(len(program)):
                 program[j] = None
+                
         elif(command[0] == 'help'):
             println('Error Codes :')
             
@@ -114,6 +123,7 @@ def readSent(sentLine):
             println('1 - Raised Error')
             println('2 - End of Program')
             println("3 - Program Didn't Stop")
+            println('4 - waiting for user input')
             
             println('')
             
@@ -123,6 +133,7 @@ def readSent(sentLine):
             
             println('stop - Halts Execution')
             println('set a b - Sets the Value at a to b')
+            println('ask a  - Sets the Value at 0 to whatever the use types')
             
         else:
             println("Unrecognized Command  -  Try 'help'")
@@ -134,9 +145,10 @@ def readSent(sentLine):
         
 
 def execute(line):
-    
+    global userInput
     global memory
     global pc
+    global waitingForInput
     
     if (line == None): # if the line is None then do nothing
         return None
@@ -171,7 +183,16 @@ def execute(line):
         elif(op == 'wait'): # wait for a set amount of time
             sleep(int(instruction[1]))
         elif(op == 'ask'):
-            println(str(instruction[1]))
+            if (userInput == None):
+                println(str(instruction[1]))
+                waitingForInput = True
+                return 4
+            else:
+                
+                memory[0] = userInput
+                userInput = None
+                waitingForInput = False
+                
         else:
             return 1
         
@@ -181,13 +202,14 @@ def runProgram():
     
     global pc
     
-    pc = 0 # reset program counter
+    #pc = 0 # reset program counter / relocated
     count = 0
     while True:
         if (pc >= len(program)): # if we finished the program, exit with a 'end of program' error
             return 2
         if (count > maxSteps): # id the program doesn't stop after a certain number of ticks (infinte loop) exit with a "didn't stop" error
             return 3
+        
         error = execute(program[pc]) # execute the instruction
         
         if (error != None): # if the program return the error
