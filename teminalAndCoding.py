@@ -6,7 +6,7 @@ textSize = 12
 textWidth= 7.23
 font = 'monospace'
 
-# list of charcaters that when type don't return their chacrater
+# list of characters that when type don't return their chacrater
 specialCharacters = ('enter','tab','escape','backspace','space','up','down','left','right')
 # a list of the numbers as strings
 numbers = ('0','1','2','3','4','5','6','7','8','9')
@@ -47,9 +47,11 @@ for i in range(memorySize):
     
 # the program counter
 pc = 0
-
+# max steps before infinte loop is assumed
 maxSteps = 30000
-    
+
+waitingOnInput = False
+userInput = None
 
 '''
 interpreter methods
@@ -58,10 +60,14 @@ interpreter methods
 def readSent(sentLine):
     
     global program
+    global waitingForInput
+    global userInput
+    global pc
     
     if (sentLine == ''): #if the sent line is blank just return
         return
-    
+    if (waitingForInput)
+        userInput = sentLine
     if (sentLine[0] in numbers): # if we are saving a line to the program
         
         i = 1
@@ -79,6 +85,7 @@ def readSent(sentLine):
         command = sentLine.split(' ') # split operation and operands for the command we want to execute
         
         if(command[0] == 'run'): # the run program command
+            pc = 0
             error = runProgram() #call runProgram and get the result
             println('exited with error ' + str(error)) # print to the console
             
