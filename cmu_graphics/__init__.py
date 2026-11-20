@@ -21,7 +21,8 @@ def check_for_shadowing():
 
     # If the __main__ file's directory is in sys.path, consider it for shadowing
     # (When running in the Python 3.13 REPL, __main__.__file__ is not in sys.path.)
-    if main_file := getattr(__main__, '__file__', None):
+    main_file = getattr(__main__, '__file__', None)
+    if main_file:
         main_directory = os.path.dirname(main_file)
         if main_directory in sys.path:
             directories_to_look_for_shadowing.append(main_directory)
@@ -85,7 +86,6 @@ def check_for_shadowing():
             'bisect',
             'builtins',
             'bz2',
-            'cairo',
             'calendar',
             'cmu_graphics',
             'code',
@@ -128,7 +128,6 @@ def check_for_shadowing():
             'platform',
             'posix',
             'posixpath',
-            'pygame',
             'queue',
             'quopri',
             'random',
@@ -183,12 +182,14 @@ def check_for_shadowing():
 
 check_for_shadowing()
 
+from cmu_graphics.dist import VENDORED
 from .libs import loader_util
 
-loader_util.verify_support()
+loader_util.verify_support(VENDORED)
 
 from cmu_graphics.cmu_graphics import (
     app,
+    appHash,
     Arc,
     Circle,
     Group,
@@ -239,7 +240,6 @@ from cmu_graphics.cmu_graphics import (
     runAppWithScreens,
     setActiveScreen,
     getImageSize,
-    pygameEvent,
     onStepEvent,
     onMainLoopEvent,
 )
@@ -263,46 +263,33 @@ from random import (
 
 from cmu_graphics.shape_logic import (
     TRANSLATED_GLOBALS,
+    TRANSLATED_CPCS_GLOBALS,
     TRANSLATED_BOOLEANS,
     TRANSLATED_KEY_NAMES,
     accentCombinations,
     PILWrapper as CMUImage,
 )
 
-__all__ = TRANSLATED_GLOBALS['keys']
+__all__ = TRANSLATED_GLOBALS['keys'] + TRANSLATED_CPCS_GLOBALS['keys']
 __all__.extend(
     [
         'setLanguage',
         'cmu_graphics',
-        'runApp',
-        'runAppWithScreens',
-        'setActiveScreen',
-        'getImageSize',
         'dcos',
         'dsin',
     ]
 )
 __all__.extend(
     [
-        'drawArc',
         'ArcShape',
-        'drawCircle',
         'CircleShape',
-        'drawImage',
         'ImageShape',
-        'drawLabel',
         'LabelShape',
-        'drawLine',
         'LineShape',
-        'drawOval',
         'OvalShape',
-        'drawPolygon',
         'PolygonShape',
-        'drawRect',
         'RectShape',
-        'drawRegularPolygon',
         'RegularPolygonShape',
-        'drawStar',
         'StarShape',
     ]
 )
@@ -311,6 +298,14 @@ g = globals()
 for language in TRANSLATED_GLOBALS:
     if language != 'keys':
         for en_name, trans_name in TRANSLATED_GLOBALS[language].items():
+            if trans_name and trans_name != en_name and en_name in g:
+                for accent_combination in accentCombinations(trans_name):
+                    g[accent_combination] = g[en_name]
+                    __all__.append(accent_combination)
+
+for language in TRANSLATED_CPCS_GLOBALS:
+    if language != 'keys':
+        for en_name, trans_name in TRANSLATED_CPCS_GLOBALS[language].items():
             if trans_name and trans_name != en_name and en_name in g:
                 for accent_combination in accentCombinations(trans_name):
                     g[accent_combination] = g[en_name]

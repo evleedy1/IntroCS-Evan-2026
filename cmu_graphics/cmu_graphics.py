@@ -1,10 +1,11 @@
 import inspect
 import os
+import time
 
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = 'hide'
-
-from cmu_graphics.shape_logic import TRANSLATED_KEY_NAMES, _ShapeMetaclass
 from cmu_graphics import shape_logic
+from cmu_graphics.dist import VENDORED
+from cmu_graphics import mvc_checker
+from cmu_graphics.shape_logic import TRANSLATED_KEY_NAMES, _ShapeMetaclass
 
 
 class Signal:
@@ -25,7 +26,6 @@ class Signal:
                 traceback.print_exc()
 
 
-pygameEvent = Signal()
 onStepEvent = Signal()
 onMainLoopEvent = Signal()
 
@@ -127,7 +127,7 @@ class Shape(object, metaclass=_ShapeMetaclass):
         if app is not None and app._app._isMvc:
             shapeName = self.__class__.__name__
             raise NotImplementedError(
-                f'Whoops! {shapeName} objects are not available in CS3 Mode. Did you want draw{shapeName}?'
+                f'Whoops! {shapeName} objects are not available in CPCS Mode. Did you want draw{shapeName}?'
             )
 
         global SHAPES_CREATED
@@ -251,8 +251,62 @@ class Line(Shape):
 
 
 class Polygon(Shape):
-    _js_attrs = Shape._js_attrs | {'addPoint', 'pointList'}
+    _js_attrs = Shape._js_attrs | {'addPoint', 'pointList', 'setCoord'}
     _init_attrs = Shape._init_attrs - {'align'}
+
+    def isCoordName(self, attr):
+        return (
+            len(attr) >= 2 and (attr[0] == 'x' or attr[0] == 'y') and attr[1:].isdigit()
+        )
+
+    def validatePointIndex(self, attr):
+        pointList = super().__getattr__('pointList')
+        pointIndex = int(attr[1:]) - 1
+        if pointIndex < 0:
+            raise AttributeError(
+                t(
+                    "Polygon object cannot access '{{attr}}' because point numbers start from 1",
+                    {'attr': attr},
+                )
+            )
+        if pointIndex >= len(pointList):
+            if len(pointList) == 1:
+                error = t(
+                    "Polygon object cannot access '{{attr}}' because it only has 1 point",
+                    {'attr': attr},
+                )
+            else:
+                error = t(
+                    "Polygon object cannot access '{{attr}}' because it only has {{numPoints}} points",
+                    {'attr': attr, 'numPoints': len(pointList)},
+                )
+            raise AttributeError(error)
+
+    def getCoord(self, attr):
+        self.validatePointIndex(attr)
+        pointList = list(super().__getattr__('pointList'))
+        pointIndex = int(attr[1:]) - 1
+        varIndex = 0 if attr[0] == 'x' else 1
+        return pointList[pointIndex][varIndex]
+
+    def setCoord(self, attr, val):
+        self.validatePointIndex(attr)
+        pointIndex = int(attr[1:]) - 1
+        varIndex = 0 if attr[0] == 'x' else 1
+        setCoordFn = super().__getattr__('setCoord')
+        return setCoordFn(attr, varIndex, pointIndex, val)
+
+    def __getattr__(self, attr):
+        if self.isCoordName(attr):
+            return self.getCoord(attr)
+        else:
+            return super().__getattr__(attr)
+
+    def __setattr__(self, attr, val):
+        if self.isCoordName(attr):
+            self.setCoord(attr, val)
+        else:
+            super().__setattr__(attr, val)
 
     def __init__(self, *args, **kwargs):
         super().__init__('Polygon', ['initialPoints'], [args], kwargs)
@@ -311,7 +365,7 @@ class Group(Shape):
     def __init__(self, *args, **kwargs):
         if app is not None and app._app._isMvc:
             raise NotImplementedError(
-                'Whoops! Group objects are not available in CS3 Mode.'
+                'Whoops! Group objects are not available in CPCS Mode.'
             )
         super().__init__('Group', [], [], kwargs)
         for shape in args:
@@ -328,10 +382,6 @@ class Sound(object):
     number_of_sounds = 0
 
     def __init__(self, url):
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
-            pygame.mixer.set_num_channels(1)
-
         if not isinstance(url, str):
             callSpec = '{className}.{attr}'.format(className=t('Sound'), attr=t('url'))
             err = t(
@@ -347,8 +397,6 @@ class Sound(object):
             raise Exception(err)
 
         Sound.number_of_sounds += 1
-        if pygame.mixer.get_num_channels() == Sound.number_of_sounds:
-            pygame.mixer.set_num_channels(Sound.number_of_sounds * 2)
 
         if url.startswith('file://'):
             url = url.split('//')[-1]
@@ -356,17 +404,18 @@ class Sound(object):
         if url.startswith('http'):
             try:
                 response = webrequest.get(url)
-                self.sound = io.BytesIO(response.read())
+                data = io.BytesIO(response.read()).getvalue()
             except Exception:
                 raise Exception('Failed to load sound data')
-
-        elif hasattr(__main__, '__file__'):
-            self.sound = os.path.abspath(os.path.join(__main__.__file__, '..', url))
         else:
-            self.sound = os.path.abspath(os.path.join(os.getcwd(), url))
+            if hasattr(__main__, '__file__'):
+                path = os.path.abspath(os.path.join(__main__.__file__, '..', url))
+            else:
+                path = os.path.abspath(os.path.join(os.getcwd(), url))
+            with open(path, 'rb') as f:
+                data = f.read()
 
-        self.sound = pygame.mixer.Sound(self.sound)
-        self.channel = None
+        self._sound = wyvern.WyvernSound(data)
 
     def play(self, **kwargs):
         default_kwargs = {'loop': False, 'restart': False}
@@ -394,19 +443,10 @@ class Sound(object):
                 + repr(restart)
             )
 
-        loop = -1 if loop else 0
-        if not self.channel or not self.channel.get_busy():
-            self.channel = self.sound.play(loops=loop)
-        elif restart and self.channel.get_sound() != self.sound:
-            self.channel = self.sound.play(loops=loop)
-        elif restart:
-            self.channel.stop()
-            self.channel = self.sound.play(loops=loop)
-        else:
-            self.channel.unpause()
+        self._sound.play(loop, restart)
 
     def pause(self):
-        self.channel.pause()
+        self._sound.pause()
 
     def setVolume(self, volume: float):
         """
@@ -414,13 +454,13 @@ class Sound(object):
         If value < 0.0, the volume will not be changed\n
         If value > 1.0, the volume will be set to 1.0
         """
-        self.sound.set_volume(volume)
+        self._sound.set_volume(volume)
 
     def getVolume(self):
         """
         Returns the volume (range: 0.0 - 1.0 (inclusive))
         """
-        return self.sound.get_volume()
+        return self._sound.get_volume()
 
 
 SHAPES = [
@@ -450,8 +490,8 @@ enEventHandlerNamesMinusOnAppStart = [
 ]
 
 eventHandlerTranslationsMinusOnAppStart = list(
-        enEventHandlerNamesMinusOnAppStart
-) # Make a copy
+    enEventHandlerNamesMinusOnAppStart
+)  # Make a copy
 
 onAppStartTranslations = ['onAppStart']
 
@@ -481,7 +521,7 @@ def makeDrawFn(shape):
     def drawFn(*args, **kwargs):
         if not app._app._isMvc:
             raise Exception(
-                f'You called draw{shape.__name__} (a CS3 Mode function) outside of redrawAll.'
+                f'You called draw{shape.__name__} (a CPCS Mode function) outside of redrawAll.'
             )
         if not app._app.inRedrawAll:
             raise MvcException('Cannot draw (modify the view) outside of redrawAll')
@@ -496,7 +536,7 @@ def makeInvisibleConstructor(shape):
     def constructor(*args, **kwargs):
         if not app._app._isMvc:
             raise Exception(
-                f'You called {shape.__name__}Shape (a CS3 Mode function) outside of CS3 Mode. To run your app in CS3 Mode, use runApp().'
+                f'You called {shape.__name__}Shape (a CPCS Mode function) outside of CPCS Mode. To run your app in CPCS Mode, use runApp().'
             )
         with NoMvc():
             result = shape(*args, **kwargs)
@@ -538,6 +578,8 @@ def translateKeyName(keyName, originalLanguage):
 
 def cleanAndClose():
     try:
+        # This is mainly used for cleaning up resources like temporary files.
+        # Since you can't leak resources on web, this doesn't have a web equivalent.
         app._app.callUserFn('onAppStop', (), redraw=False)
     except Exception:
         pass
@@ -560,18 +602,17 @@ def _safeMethod(appMethod):
     return m
 
 
-# Based on Lukas Peraza's pygame framework
-# https://github.com/LBPeraza/Pygame-Asteroids
 class App(object):
     def printFullTracebacks(self):
         shape_logic.printFullTracebacks()
 
     def getScreenshot(self, path):
         with DRAWING_LOCK:
-            pygame.image.save(self._screen, path)
+            self._ctx.save_png(path)
 
     def quit(self):
         self._running = False
+        wyvern.quit()
 
     def getPosArgCount(self, fn):
         fn_code = fn.__code__
@@ -586,13 +627,16 @@ class App(object):
     def getFnNameAndLanguage(self, enFnName, useActiveScreen):
         if enFnName in self.userGlobals:
             return enFnName, 'en'
-        
+
         if app._app._initialScreen is not None and useActiveScreen:
             screenFnName = f'{self.activeScreen}_{enFnName}'
             if screenFnName in self.userGlobals:
                 return screenFnName, 'en'
 
-        for language, translations in shape_logic.TRANSLATED_USER_FUNCTION_NAMES.items():
+        for (
+            language,
+            translations,
+        ) in shape_logic.TRANSLATED_USER_FUNCTION_NAMES.items():
             if language == 'keys':
                 continue
 
@@ -650,7 +694,9 @@ class App(object):
         return args, kwargs
 
     @_safeMethod
-    def callUserFn(self, baseFnName, args, kwargs=None, redraw=True, useActiveScreen=True):
+    def callUserFn(
+        self, baseFnName, args, kwargs=None, redraw=True, useActiveScreen=True
+    ):
         if kwargs is None:
             kwargs = dict()
 
@@ -669,63 +715,40 @@ class App(object):
     def redrawAllWrapper(self):
         self.group.clear()
 
+        checkerEnabled = not self.disableMvcChecker
         self.inRedrawAll = True
-        self.callUserFn('redrawAll', ())
-        self.inRedrawAll = False
+        try:
+            checkerSeconds = 0
+            hash1 = None
+            if checkerEnabled:
+                t0 = time.monotonic()
+                hash1 = appHash()
+                checkerSeconds += time.monotonic() - t0
 
-    @staticmethod
-    def getKey(keyCode, modifierMask):
-        keyNameMap = {
-            pygame.K_TAB: 'tab',
-            pygame.K_RETURN: 'enter',
-            pygame.K_BACKSPACE: 'backspace',
-            pygame.K_DELETE: 'delete',
-            pygame.K_ESCAPE: 'escape',
-            pygame.K_SPACE: 'space',
-            pygame.K_RIGHT: 'right',
-            pygame.K_LEFT: 'left',
-            pygame.K_UP: 'up',
-            pygame.K_DOWN: 'down',
-            pygame.K_RCTRL: 'ctrl',
-            pygame.K_LCTRL: 'ctrl',
-        }
+            self.callUserFn('redrawAll', ())
 
-        shiftMap = {
-            '1': '!',
-            '2': '@',
-            '3': '#',
-            '4': '$',
-            '5': '%',
-            '6': '^',
-            '7': '&',
-            '8': '*',
-            '9': '(',
-            '0': ')',
-            '[': '{',
-            ']': '}',
-            '/': '?',
-            '=': '+',
-            '\\': '|',
-            "'": '"',
-            ',': '<',
-            '.': '>',
-            '-': '_',
-            ';': ':',
-            '`': '~',
-        }
+            if checkerEnabled:
+                t0 = time.monotonic()
+                hash2 = appHash()
+                checkerSeconds += time.monotonic() - t0
+                if hash2 != hash1:
+                    raise MvcException(
+                        'You may not change the app state (the model) in redrawAll (the view)'
+                    )
 
-        # Punctuation, numbers, and letters
-        if 33 < keyCode < 127:
-            key = chr(keyCode)
-            if modifierMask & pygame.KMOD_SHIFT:
-                key = shiftMap.get(key, key).upper()
-            return key
-        return keyNameMap.get(keyCode, None)
+                if checkerSeconds >= 0.1 and self.slowMvcCheckerCount < 5:
+                    self.slowMvcCheckerCount += 1
+                    if self.slowMvcCheckerCount == 5:
+                        print(
+                            'WARNING: The MVC violation checker is taking a long time to run in '
+                            'your program. This can happen when your model is very large.\n\n'
+                            'You can disable the MVC violation checker (and potentially speed up '
+                            'your program) by setting app.disableMvcChecker to True in onAppStart.'
+                        )
+        finally:
+            self.inRedrawAll = False
 
     def drawErrorScreen(self):
-        cairo_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, self.width, self.height)
-        ctx = cairo.Context(cairo_surface)
-
         with NoMvc():
             Rect(0, 0, self.width, self.height, fill=None, border='red', borderWidth=2)
             Rect(
@@ -756,43 +779,27 @@ class App(object):
                 fill='red',
             )
 
-        self.redrawAll(self._screen, cairo_surface, ctx)
-
-    def getModifiers(self, modifierMask):
-        modifiers = list()
-        if modifierMask & pygame.KMOD_SHIFT:
-            modifiers.append('shift')
-        if modifierMask & pygame.KMOD_CTRL:
-            modifiers.append('control')
-        if modifierMask & pygame.KMOD_META:
-            modifiers.append('meta')
-        return modifiers
-
-    def handleKeyPress(self, keyCode, modifierMask):
-        self._modifiers = self.getModifiers(modifierMask)
-        key = App.getKey(keyCode, modifierMask)
+    def handleKeyPress(self, key, modifiers):
+        self._modifiers = list(modifiers)
 
         if key is None:
             return
-        if key == 'ctrl':
+        if key == 'control':
             self.isCtrlKeyDown = True
             return
-        if key == 'space' and (modifierMask & pygame.KMOD_SHIFT):
+        if key == 'space' and 'shift' in modifiers:
             self.paused = not self.paused
             return
 
         self._allKeysDown.add(key)
-
-        modifiers = self.getModifiers(modifierMask)
         self.callUserFn('onKeyPress', (key, modifiers))
 
-    def handleKeyRelease(self, keyCode, modifierMask):
-        self._modifiers = self.getModifiers(modifierMask)
-        key = App.getKey(keyCode, modifierMask)
+    def handleKeyRelease(self, key, modifiers):
+        self._modifiers = list(modifiers)
 
         if key is None:
             return
-        if key == 'ctrl':
+        if key == 'control':
             self.isCtrlKeyDown = False
             return
         if key.upper() in self._allKeysDown:
@@ -800,10 +807,9 @@ class App(object):
         if key.lower() in self._allKeysDown:
             self._allKeysDown.remove(key.lower())
 
-        modifiers = self.getModifiers(modifierMask)
         self.callUserFn('onKeyRelease', (key, modifiers))
 
-    def redrawAll(self, screen, cairo_surface, ctx):
+    def redrawAll(self, ctx):
         shape = shape_logic.Rect(
             {
                 'noGroup': True,
@@ -829,18 +835,6 @@ class App(object):
         finally:
             ctx.restore()
 
-        # Get the cairo buffer and convert it from BGRA to RGBA
-        data_string = cairo_surface.get_data()
-
-        # Create PyGame surface
-        pygame_surface = pygame.image.frombuffer(
-            data_string, (self.width, self.height), 'RGBA'
-        )
-
-        # Show PyGame surface
-        screen.blit(pygame_surface, (0, 0))
-        pygame.display.flip()
-
         self.frameworkRedrew = True
 
     def shouldDrawInspector(self):
@@ -860,7 +854,7 @@ class App(object):
         self._width = 400
         self._height = 400
         self._allKeysDown = set()
-        self._modifiers = set()
+        self._modifiers = []
         self.background = None
 
         self._stepsPerSecond = 30
@@ -882,6 +876,17 @@ class App(object):
 
         self._isMvc = False
         self._initialScreen = None
+
+        self._disableMvcChecker = False
+        self.slowMvcCheckerCount = 0
+
+        self._lastStepTime = None
+        self._sizeChanged = False
+        self._takeScreenshotPath = None
+        self._screenshotTriggered = False
+
+        self._cursorVisible = True
+        self._fullscreen = False
 
     def get_group(self):
         return self._tlg
@@ -905,8 +910,19 @@ class App(object):
     def setStepsPerSecond(self, value):
         shape_logic.checkNumber(sli.t('app'), 'stepsPerSecond', value, False)
         self._stepsPerSecond = value
+        wyvern.set_steps_per_second(value)
 
     stepsPerSecond = property(getStepsPerSecond, setStepsPerSecond)
+
+    def getDisableMvcChecker(self):
+        return self._disableMvcChecker
+
+    def setDisableMvcChecker(self, value):
+        if not isinstance(value, bool):
+            raise Exception('app.disableMvcChecker must be set to a boolean')
+        self._disableMvcChecker = value
+
+    disableMvcChecker = property(getDisableMvcChecker, setDisableMvcChecker)
 
     def getBackground(self):
         return sli.slGetAppProperty('background')
@@ -925,13 +941,17 @@ class App(object):
     maxShapeCount = property(getMaxShapeCount, setMaxShapeCount)
 
     def updateScreenSize(self):
+        # Resize the window once the current event is handled, so setting
+        # width and then height sends a single resize instead of two
         if self._running:
-            self.updateScreen(True)
+            self._sizeChanged = True
 
     def handleResize(self, newWidth, newHeight):
+        if (newWidth, newHeight) == (self._width, self._height):
+            return
+
         self._width = newWidth
         self._height = newHeight
-        self.updateScreen(False)
 
         # Redraw even if onResize is not present in the user's globals
         self.callUserFn('onResize', (), redraw=False)
@@ -940,7 +960,11 @@ class App(object):
 
     def handleSetActiveScreen(self, newScreen, redraw=True):
         self.activeScreen = newScreen
-        self.callUserFn('onScreenActivate', (), redraw=redraw, useActiveScreen=True)
+
+        # Redraw even if onScreenActivate is not present in the user's globals
+        self.callUserFn('onScreenActivate', (), redraw=False, useActiveScreen=True)
+        if redraw:
+            self.redrawAllWrapper()
 
     def getLeft(self):
         return 0
@@ -1008,9 +1032,18 @@ class App(object):
 
     def set_showFontWarnings(self, value):
         shape_logic.SHOW_FONT_WARNINGS = value
-    
+
     showFontWarnings = property(get_showFontWarnings, set_showFontWarnings)
 
+    def get_cursorVisible(self):
+        return self._cursorVisible
+
+    def set_cursorVisible(self, value):
+        self._cursorVisible = value
+        if self._running:
+            wyvern.set_cursor_visible(value)
+
+    cursorVisible = property(get_cursorVisible, set_cursorVisible)
 
     def stop(self):
         self._stopped = True
@@ -1063,96 +1096,134 @@ class App(object):
         )
         return p
 
-    def updateScreen(self, newScreen):
-        if newScreen:
-            self._screen = pygame.display.set_mode(
-                (self.width, self.height), pygame.RESIZABLE
+    def enableFullscreen(self):
+        self._fullscreen = True
+        if self._running:
+            wyvern.set_fullscreen(True)
+
+    def disableFullscreen(self):
+        self._fullscreen = False
+        if self._running:
+            wyvern.set_fullscreen(False)
+
+    def on_event(self, event, surface):
+        try:
+            self.handleEvent(event, surface)
+        finally:
+            if self._sizeChanged:
+                self._sizeChanged = False
+                wyvern.set_size(int(self._width), int(self._height))
+
+    def handleEvent(self, event, surface):
+        self._ctx = surface.canvas
+
+        # The inspector keeps working after the app stops (e.g. on an error),
+        # so track the mouse and control key even then
+        if event.event_type in ('mouse_move', 'mouse_drag'):
+            self.inspector.setMousePosition(event.mouse.x, event.mouse.y)
+        elif event.event_type in ('key_press', 'key_release'):
+            if event.key.key == 'control':
+                self.isCtrlKeyDown = event.event_type == 'key_press'
+
+        if self.stopped and event.event_type not in ('redraw', 'step'):
+            return
+
+        elif event.event_type == 'step':
+            self._handleStep()
+
+        elif event.event_type == 'redraw':
+            if self._takeScreenshotPath is not None:
+                if not self._screenshotTriggered:
+                    self.callUserFn('onMousePress', (200, 200, 0))
+                    self._screenshotTriggered = True
+                else:
+                    self.inspector.clearCache()
+                    self.redrawAll(self._ctx)
+                    self.getScreenshot(self._takeScreenshotPath)
+                    self._running = False
+                    self.quit()
+                return
+            self.inspector.clearCache()
+            self.redrawAll(self._ctx)
+
+        elif event.event_type == 'mouse_press':
+            self.callUserFn(
+                'onMousePress', (event.mouse.x, event.mouse.y, event.mouse.button)
             )
-        self._cairo_surface = cairo.ImageSurface(
-            cairo.FORMAT_ARGB32, self.width, self.height
-        )
-        self._ctx = cairo.Context(self._cairo_surface)
+
+        elif event.event_type == 'mouse_release':
+            self.callUserFn(
+                'onMouseRelease', (event.mouse.x, event.mouse.y, event.mouse.button)
+            )
+
+        elif event.event_type == 'mouse_move':
+            self.callUserFn('onMouseMove', (event.mouse.x, event.mouse.y))
+
+        elif event.event_type == 'mouse_drag':
+            self.callUserFn(
+                'onMouseDrag', (event.mouse.x, event.mouse.y, list(event.mouse.buttons))
+            )
+
+        elif event.event_type == 'key_press':
+            self.handleKeyPress(event.key.key, event.key.modifiers)
+
+        elif event.event_type == 'key_release':
+            self.handleKeyRelease(event.key.key, event.key.modifiers)
+
+        elif event.event_type == 'modifiers_changed':
+            # Modifier keys don't send key events, but onKeyHold should see
+            # them as soon as they're pressed or released
+            self._modifiers = list(event.modifiers)
+
+        elif event.event_type == 'resize':
+            self.handleResize(event.resize.width, event.resize.height)
+
+        elif event.event_type == 'set_active_screen':
+            self.handleSetActiveScreen(event.new_screen)
+
+    def _handleStep(self):
+        # The event loop sends steps at stepsPerSecond (see setStepsPerSecond)
+        now = time.monotonic()
+        if self._lastStepTime is None:
+            msPassed = 1000 / self.stepsPerSecond
+        else:
+            msPassed = (now - self._lastStepTime) * 1000
+        self._lastStepTime = now
+
+        if not (self.paused or self.stopped):
+            self.callUserFn('onStep', ())
+            if len(self._allKeysDown) > 0:
+                self.callUserFn(
+                    'onKeyHold', (list(self._allKeysDown), list(self._modifiers))
+                )
+            onStepEvent.send_robust(self.callUserFn, self._wrapper)
+
+        onMainLoopEvent.send_robust(msPassed, self.callUserFn, self._wrapper)
 
     @_safeMethod
-    def run(self):
-        pygame.init()
-        pygame.display.set_caption(self.title)
-
-        self._screen = None
-        self.updateScreen(True)
-
-        lastTick = 0
+    def run(self, takeScreenshotPath=None):
+        self._takeScreenshotPath = takeScreenshotPath
+        self._screenshotTriggered = False
         self._running = True
+        wyvern.set_steps_per_second(self.stepsPerSecond)
 
-        while self._running:
-            sys.stdout.flush()
-            with DRAWING_LOCK:
-                had_event = False
-                for event in pygame.event.get():
-                    had_event = True
-                    if not self.stopped:
-                        if event.type == pygame.MOUSEBUTTONDOWN and event.button <= 3:
-                            self.callUserFn(
-                                'onMousePress', (*event.pos, event.button - 1)
-                            )
-                        elif event.type == pygame.MOUSEBUTTONUP and event.button <= 3:
-                            self.callUserFn(
-                                'onMouseRelease', (*event.pos, event.button - 1)
-                            )
-                        elif event.type == pygame.MOUSEMOTION:
-                            if event.buttons == (0, 0, 0):
-                                self.callUserFn('onMouseMove', event.pos)
-                            else:
-                                self.callUserFn(
-                                    'onMouseDrag',
-                                    (
-                                        *event.pos,
-                                        [i for i in range(3) if event.buttons[i] != 0],
-                                    ),
-                                )
-                        elif event.type == pygame.KEYDOWN:
-                            self.handleKeyPress(event.key, event.mod)
-                        elif event.type == pygame.KEYUP:
-                            self.handleKeyRelease(event.key, event.mod)
-                        elif event.type == SET_ACTIVE_SCREEN:
-                            self.handleSetActiveScreen(event.newScreen)
-                        elif event.type == pygame.WINDOWSIZECHANGED:
-                            self.handleResize(event.x, event.y)
-                    if event.type == pygame.QUIT:
-                        self._running = False
-                    elif event.type == pygame.MOUSEMOTION:
-                        self.inspector.setMousePosition(*event.pos)
-                    elif event.type in (pygame.KEYDOWN, pygame.KEYUP):
-                        key = App.getKey(event.key, event.mod)
-                        if key == 'ctrl':
-                            self.isCtrlKeyDown = event.type == pygame.KEYDOWN
-
-                    pygameEvent.send_robust(event, self.callUserFn, self._wrapper)
-
-                should_redraw = had_event
-
-                msPassed = pygame.time.get_ticks() - lastTick
-                if 1000 / self.stepsPerSecond - msPassed < 1:
-                    lastTick = pygame.time.get_ticks()
-                    if not (self.paused or self.stopped):
-                        self.callUserFn('onStep', ())
-                        if len(self._allKeysDown) > 0:
-                            self.callUserFn(
-                                'onKeyHold',
-                                (list(self._allKeysDown), list(self._modifiers)),
-                            )
-                        onStepEvent.send_robust(self.callUserFn, self._wrapper)
-                        should_redraw = True
-
-                if should_redraw:
-                    self.inspector.clearCache()
-                    self.redrawAll(self._screen, self._cairo_surface, self._ctx)
-
-                onMainLoopEvent.send_robust(msPassed, self.callUserFn, self._wrapper)
-
-                pygame.time.wait(1)
-
-        pygame.quit()
+        try:
+            wyvern.run(
+                self.on_event,
+                int(self.width),
+                int(self.height),
+                True,
+                self.title,
+                self._fullscreen,
+                self._cursorVisible,
+                # Set when running tests, so windows don't take focus
+                visible=not os.environ.get('CMU_GRAPHICS_HIDDEN_WINDOW'),
+            )
+        finally:
+            # The window is gone even if the event loop failed, so there's no
+            # error screen to draw. self._running = False causes _safeMethod to exit
+            # instead of drawing
+            self._running = False
         cleanAndClose()
 
 
@@ -1176,6 +1247,8 @@ class AppWrapper(object):
             'top',
             'setMaxShapeCount',
             'printFullTracebacks',
+            'enableFullscreen',
+            'disableFullscreen',
         ]
     )
     readWriteAttrs = set(
@@ -1191,9 +1264,12 @@ class AppWrapper(object):
             'maxShapeCount',
             'inspectorEnabled',
             'showFontWarnings',
+            'disableMvcChecker',
+            'cursorVisible',
         ]
     )
     allAttrs = readOnlyAttrs | readWriteAttrs
+    stateHashAttrs = readWriteAttrs - {'group', 'disableMvcChecker'}
 
     def __init__(self, app):
         self._app = app
@@ -1215,7 +1291,13 @@ class AppWrapper(object):
     def __setattr__(self, attr, value):
         attr = toEnglish(attr, 'app-attr')
         if (attr != '_app') and (getattr(self._app, 'inRedrawAll', False)):
-            raise MvcException(f'Cannot change app.{attr} in redrawAll')
+            if attr == 'disableMvcChecker':
+                raise MvcException(
+                    'Cannot change app.disableMvcChecker in redrawAll — '
+                    'set it in onAppStart instead'
+                )
+            if not self._app.disableMvcChecker:
+                raise MvcException(f'Cannot change app.{attr} in redrawAll')
         if attr in AppWrapper.readOnlyAttrs:
             raise Exception(f'app.{attr} is read-only')
         if attr in AppWrapper.readWriteAttrs:
@@ -1223,15 +1305,82 @@ class AppWrapper(object):
         return super().__setattr__(attr, value)
 
 
-def runApp(width=400, height=400, **kwargs):
+def appHash():
+    try:
+        return mvc_checker.appHash(app, AppWrapper.stateHashAttrs)
+    except RecursionError:
+        # Raised from None so students don't see a traceback through
+        # hundreds of deepHash frames
+        raise MvcException(
+            'Your app state (the model) is too deeply nested for the MVC '
+            'violation checker to check. You can disable the MVC violation '
+            'checker by setting app.disableMvcChecker to True in onAppStart.'
+        ) from None
+
+
+def processRunAppArgs(args, kwargs):
+    # Extract width and height (and their translations) from kwargs
+    width = 400
+    height = 400
+
+    set_width = False
+    set_height = False
+
+    takeScreenshotPath = None
+
+    remaining_kwargs = {}
+
+    # Handle positional arguments for width and height
+    if len(args) >= 1:
+        width = args[0]
+        set_width = True
+    if len(args) >= 2:
+        height = args[1]
+        set_height = True
+    if len(args) > 2:
+        raise TypeError(
+            f'{t("runApp")}() takes from 0 to 2 positional arguments but {len(args)} were given'
+        )
+
+    for param, value in kwargs.items():
+        if toEnglish(param, 'shape-attr') == 'width':
+            if set_width:
+                raise TypeError(
+                    f"{t('runApp')}() got multiple values for argument '{param}'"
+                )
+            width = value
+            set_width = True
+        elif toEnglish(param, 'shape-attr') == 'height':
+            if set_height:
+                raise TypeError(
+                    f"{t('runApp')}() got multiple values for argument '{param}'"
+                )
+            height = value
+            set_height = True
+        elif param == 'takeScreenshotPath':
+            takeScreenshotPath = value
+        else:
+            # Pass through any other keyword arguments to onAppStart
+            remaining_kwargs[param] = value
+
+    return width, height, takeScreenshotPath, remaining_kwargs
+
+
+def runApp(*args, **kwargs):
+    width, height, takeScreenshotPath, remaining_kwargs = processRunAppArgs(
+        args, kwargs
+    )
+
     # If we didn't call runAppWithScreens
     if app._app._initialScreen is None:
-        for appFnName in (eventHandlerTranslationsMinusOnAppStart + onAppStartTranslations):
+        for appFnName in (
+            eventHandlerTranslationsMinusOnAppStart + onAppStartTranslations
+        ):
             screenAppSuffix = f'_{appFnName}'
             for globalVarName in app._app.userGlobals:
                 if globalVarName.endswith(screenAppSuffix):
                     raise Exception(
-                        f'The name of your function "{globalVarName}" ends with "{screenAppSuffix}", which is only allowed if you are using "screens" in CS3 Mode. To run an app with screens, call runAppWithScreens() instead of runApp().'
+                        f'The name of your function "{globalVarName}" ends with "{screenAppSuffix}", which is only allowed if you are using "screens" in CPCS Mode. To run an app with screens, call runAppWithScreens() instead of runApp().'
                     )
 
     setupMvc()
@@ -1243,9 +1392,9 @@ def runApp(width=400, height=400, **kwargs):
 ****************************************************************************
 Your code created a shape object (Rect, Oval, etc.) before calling runApp().
 
-runApp (CS3 Mode) is not compatible with shape objects.
+runApp (CPCS Mode) is not compatible with shape objects.
 
-If you'd like to use CS3 Mode, please use drawing functions
+If you'd like to use CPCS Mode, please use drawing functions
 (drawRect, drawOval, etc) in redrawAll.
 
 Otherwise, please call cmu_graphics.run() in place of runApp.
@@ -1253,7 +1402,9 @@ Otherwise, please call cmu_graphics.run() in place of runApp.
 
     # Don't redraw on either of these calls to callUserFn, because we will
     # instead redraw below
-    app._app.callUserFn('onAppStart', (), kwargs, redraw=False, useActiveScreen=False)            
+    app._app.callUserFn(
+        'onAppStart', (), remaining_kwargs, redraw=False, useActiveScreen=False
+    )
 
     if app._app._initialScreen is not None:
         sortedGlobals = sorted(app._app.userGlobals)
@@ -1261,7 +1412,7 @@ Otherwise, please call cmu_graphics.run() in place of runApp.
             for globalVarName in sortedGlobals:
                 if globalVarName.endswith(f'_{onAppStartTranslation}'):
                     screenFn = app._app.userGlobals[globalVarName]
-                    screenFn(app, **kwargs)
+                    screenFn(app, **remaining_kwargs)
 
         setActiveScreen(app._app._initialScreen, fromRunApp=True)
 
@@ -1269,32 +1420,54 @@ Otherwise, please call cmu_graphics.run() in place of runApp.
     # just sets up variables and draws a static image.
     app._app.redrawAllWrapper()
 
-    run()
+    run(takeScreenshotPath=takeScreenshotPath)
 
 
 def setActiveScreen(screen, fromRunApp=False):
     if not app._app._isMvc:
         raise Exception(
-            'You called setActiveScreen (a CS3 Mode function) outside of CS3 Mode. To run your app in CS3 Mode, use runApp() or runAppWithScreens().'
+            'You called setActiveScreen (a CPCS Mode function) outside of CPCS Mode. To run your app in CPCS Mode, use runApp() or runAppWithScreens().'
         )
     if (screen in [None, '']) or (not isinstance(screen, str)):
         raise Exception(f'{repr(screen)} is not a valid screen')
-    redrawAllFnName = f'{screen}_redrawAll'
-    if redrawAllFnName not in app._app.userGlobals:
-        raise Exception(f'Screen {screen} requires {redrawAllFnName}()')
+
+    redrawAllFnNames = ['redrawAll']
+    redrawAllInCorrectLanguage = 'redrawAll'
+    for language, translations in shape_logic.TRANSLATED_USER_FUNCTION_NAMES.items():
+        if language == 'keys':
+            continue
+        for redrawAllTranslation in translations.get('redrawAll', []):
+            if redrawAllTranslation not in redrawAllFnNames:
+                redrawAllFnNames.append(redrawAllTranslation)
+                if language == shape_logic.cmuGraphicsLanguage:
+                    redrawAllInCorrectLanguage = redrawAllTranslation
+
+    if not any(
+        f'{screen}_{fnName}' in app._app.userGlobals for fnName in redrawAllFnNames
+    ):
+        raise Exception(
+            t(
+                "Screen '{{screen}}' requires '{{screen}}_{{redrawAllInCorrectLanguage}}()'",
+                {
+                    'screen': screen,
+                    'redrawAllInCorrectLanguage': redrawAllInCorrectLanguage,
+                },
+            )
+        )
+
     if fromRunApp:
-        app._app.handleSetActiveScreen(screen, redraw=False)
+        app._app.handleSetActiveScreen(screen, redraw=not fromRunApp)
     else:
-        pygame.event.post(pygame.event.Event(SET_ACTIVE_SCREEN, newScreen=screen))
+        wyvern.set_active_screen(screen)
 
 
 def runAppWithScreens(initialScreen, *args, **kwargs):
     userGlobals = app._app.userGlobals
 
     for appFnName in eventHandlerTranslationsMinusOnAppStart:
-            if appFnName in userGlobals:
-                raise Exception(f'Do not define {appFnName} when using screens')
-            
+        if appFnName in userGlobals:
+            raise Exception(f'Do not define {appFnName} when using screens')
+
     app._app._isMvc = True
     app._app._initialScreen = initialScreen
     runApp(*args, **kwargs)
@@ -1371,12 +1544,12 @@ def loop():
     run()
 
 
-def run():
+def run(*, takeScreenshotPath=None):
     if not app._app._isMvc:
         for cs3ModeHandler in ['redrawAll']:
             if cs3ModeHandler in __main__.__dict__:
                 raise Exception(
-                    f"You defined the event handler {cs3ModeHandler} which works with CS3 mode, and then called cmu_graphics.run(), which doesn't work with CS3 mode. Did you mean to call runApp instead?"
+                    f"You defined the event handler {cs3ModeHandler} which works with CPCS Mode, and then called cmu_graphics.run(), which doesn't work with CPCS Mode. Did you mean to call runApp instead?"
                 )
 
     global MAINLOOP_RUN
@@ -1386,7 +1559,7 @@ def run():
         threading.Thread(target=CSAcademyConsole().interact).start()
 
     try:
-        app._app.run()
+        app._app.run(takeScreenshotPath)
     except KeyboardInterrupt:
         cleanAndClose()
 
@@ -1468,6 +1641,12 @@ def save_update_info(update_info):
         f.write(json.dumps(update_info))
 
 
+def version_key(version):
+    # Compare release numbers numerically, so that 2.0.10 is newer than 2.0.9.
+    # Raises ValueError for anything that isn't a plain X.Y.Z version.
+    return tuple(int(part) for part in version.split('.'))
+
+
 def check_for_update():
     try:
         update_info = get_update_info()
@@ -1496,14 +1675,14 @@ def check_for_update():
         else:
             most_recent_version = update_info.get('most_recent_version', version)
 
-        if most_recent_version > version:
+        if version_key(most_recent_version) > version_key(version):
             print(
                 f'\n\nYou are running cmu-graphics version {version}, but a newer version {most_recent_version} is available.'
             )
-            ### ZIPFILE VERSION ###
-            print('Visit https://academy.cs.cmu.edu/desktop to upgrade.')
-            ### END ZIPFILE VERSION ###
-            
+            if VENDORED:
+                print('Visit https://academy.cs.cmu.edu/desktop to upgrade.')
+            else:
+                print('Run "pip install --upgrade cmu-graphics" to upgrade.')
             print('\n\n')
     except Exception:
         pass
@@ -1534,11 +1713,7 @@ if 'CMU_GRAPHICS_DEBUG' in __main__.__dict__:
 
 import math
 
-### ZIPFILE VERSION ###
-from cmu_graphics.libs import cairo_loader as cairo
-
-### END ZIPFILE VERSION ###
-
+from cmu_graphics.deps import wyvern
 from random import *
 from cmu_graphics.utils import *
 import atexit
@@ -1546,12 +1721,6 @@ import threading
 import traceback
 
 DRAWING_LOCK = threading.RLock()
-
-### ZIPFILE VERSION ###
-from cmu_graphics.libs import pygame_loader as pygame
-
-### END ZIPFILE VERSION ###
-
 
 sli = shape_logic.ShapeLogicInterface()
 slInitShape = sli.slInitShape
@@ -1564,7 +1733,7 @@ t = sli.t
 
 SHAPES_CREATED = 0
 MAINLOOP_RUN = False
-SET_ACTIVE_SCREEN = pygame.event.custom_type()
+
 
 # Checks to see if a user created shapes but did not call
 # cmu_graphics.run()

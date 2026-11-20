@@ -1,77 +1,12 @@
-import math
-
-### ZIPFILE VERSION ###
-import libs.cairo_loader as cairo
-import libs.pygame_loader as pygame
-
-### END ZIPFILE VERSION ###
-
 import json
+import os
+import time
+
+from deps import wyvern
 
 
-def roundedrec(ctx, x, y, w, h, radius_x=5, radius_y=5):
-    # from mono moonlight aka mono silverlight
-    # test limits (without using multiplications)
-    # http://graphics.stanford.edu/courses/cs248-98-fall/Final/q1.html
-    ARC_TO_BEZIER = 0.55228475
-    if radius_x > w - radius_x:
-        radius_x = w / 2
-    if radius_y > h - radius_y:
-        radius_y = h / 2
-
-    # approximate (quite close) the arc using a bezier curve
-    c1 = ARC_TO_BEZIER * radius_x
-    c2 = ARC_TO_BEZIER * radius_y
-
-    ctx.new_path()
-    ctx.move_to(x + radius_x, y)
-    ctx.rel_line_to(w - 2 * radius_x, 0.0)
-    ctx.rel_curve_to(c1, 0.0, radius_x, c2, radius_x, radius_y)
-    ctx.rel_line_to(0, h - 2 * radius_y)
-    ctx.rel_curve_to(0.0, c2, c1 - radius_x, radius_y, -radius_x, radius_y)
-    ctx.rel_line_to(-w + 2 * radius_x, 0)
-    ctx.rel_curve_to(-c1, 0, -radius_x, -c2, -radius_x, -radius_y)
-    ctx.rel_line_to(0, -h + 2 * radius_y)
-    ctx.rel_curve_to(0.0, -c2, radius_x - c1, -radius_y, radius_x, -radius_y)
-    ctx.close_path()
-
-
-keyNameMap = {
-    pygame.K_TAB: 'tab',
-    pygame.K_RETURN: 'enter',
-    pygame.K_BACKSPACE: 'backspace',
-    pygame.K_DELETE: 'delete',
-    pygame.K_ESCAPE: 'escape',
-    pygame.K_SPACE: 'space',
-    pygame.K_RIGHT: 'right',
-    pygame.K_LEFT: 'left',
-    pygame.K_UP: 'up',
-    pygame.K_DOWN: 'down',
-}
-
-shiftMap = {
-    '1': '!',
-    '2': '@',
-    '3': '#',
-    '4': '$',
-    '5': '%',
-    '6': '^',
-    '7': '&',
-    '8': '*',
-    '9': '(',
-    '0': ')',
-    '[': '{',
-    ']': '}',
-    '/': '?',
-    '=': '+',
-    '\\': '|',
-    "'": '"',
-    ',': '<',
-    '.': '>',
-    '-': '_',
-    ';': ':',
-    '`': '~',
-}
+def nowMs():
+    return time.monotonic() * 1000
 
 
 class KeyHoldData(object):
@@ -86,9 +21,9 @@ class TextBox(object):
         self.modal = modal
         self.height = 25
         self.cursorActive = True
-        self.cursorTimer = pygame.time.get_ticks()
+        self.cursorTimer = nowMs()
         self.blinkDelay = 400
-        self.font = ('Arial', cairo.FONT_WEIGHT_NORMAL, cairo.FONT_SLANT_NORMAL)
+        self.font = ('Arial', wyvern.FontWeight.NORMAL, wyvern.FontSlant.NORMAL)
         self.textSize = 15
         self.padding = 4
         self.textAnchor = [
@@ -105,7 +40,7 @@ class TextBox(object):
     def focus(self):
         self.active = True
         self.cursorActive = True
-        self.cursorTimer = pygame.time.get_ticks()
+        self.cursorTimer = nowMs()
 
     def get_left(self):
         return self.modal.left + self.modal.textXMargin
@@ -129,8 +64,8 @@ class TextBox(object):
             ctx.set_line_width(1)
             ctx.stroke()
         else:
-            roundedrec(ctx, self.left, self.top, self.width, self.height, 3, 3)
-            ctx.set_source_rgba(0.9, 0.6, 0.4, 1.0)
+            ctx.round_rectangle(self.left, self.top, self.width, self.height, 3, 3)
+            ctx.set_source_rgba(0.4, 0.6, 0.9, 1.0)
             ctx.set_line_width(3)
             ctx.stroke()
 
@@ -163,7 +98,7 @@ class TextBox(object):
             )
             left = min(cursorX, anchorX)
             right = max(cursorX, anchorX)
-            ctx.set_source_rgba(1.0, 0.85, 0.7)
+            ctx.set_source_rgba(0.7, 0.85, 1.0)
             ctx.rectangle(left, cursorTop, right - left, cursorBottom - cursorTop)
             ctx.fill()
 
@@ -203,6 +138,8 @@ class TextBox(object):
         return len(self.buf)
 
     def getTextWidth(self, text):
+        if len(text) <= 0:
+            return 0
         ctx = self.modal.measureCtx
         ctx.save()
         ctx.select_font_face(*self.font)
@@ -217,19 +154,16 @@ class TextBox(object):
         return (xInBounds or checkYOnly) and (yInBounds)
 
     def onStep(self):
-        if pygame.time.get_ticks() - self.cursorTimer > self.blinkDelay:
+        if nowMs() - self.cursorTimer > self.blinkDelay:
             self.cursorActive = not self.cursorActive
-            self.cursorTimer = pygame.time.get_ticks()
+            self.cursorTimer = nowMs()
         for key in self.keysHeldData:
             data = self.keysHeldData[key]
             if data.timer is None and data.isDown:
-                data.timer = pygame.time.get_ticks()
+                data.timer = nowMs()
                 data.delay = 400
-            elif (
-                data.timer is not None
-                and pygame.time.get_ticks() - data.timer > data.delay
-            ):
-                data.timer = pygame.time.get_ticks()
+            elif data.timer is not None and nowMs() - data.timer > data.delay:
+                data.timer = nowMs()
                 data.delay = 50
                 if key == 'backspace':
                     self.onBackSpace()
@@ -266,24 +200,22 @@ class TextBox(object):
         else:
             self.cursorPos = min(self.cursorPos + 1, len(self.buf))
 
-    def onKeyPress(self, keyCode, modifier):
+    def onKeyPress(self, key, is_named, modifiers):
         if not self.active:
             return
-        # Punctuation, space, numbers, and letters
-        if 31 < keyCode < 127:
-            key = chr(keyCode)
-            if modifier & pygame.KMOD_SHIFT:
-                key = shiftMap.get(key, key).upper()
 
-            if (modifier & pygame.KMOD_CTRL) or (modifier & pygame.KMOD_LMETA):
+        # Space is a named key, but types like any other character
+        if is_named and key == 'space':
+            key, is_named = ' ', False
+
+        if not is_named and len(key) == 1:
+            if 'control' in modifiers or 'meta' in modifiers:
                 return
-
             if self.anchorPos is not None:
                 self.onBackSpace()
             self.buf.insert(self.cursorPos, key)
             self.cursorPos += 1
         else:
-            key = keyNameMap.get(keyCode, None)
             if key == 'left':
                 self.onKeyLeft()
             elif key == 'right':
@@ -301,7 +233,7 @@ class TextBox(object):
             if key not in self.keysHeldData:
                 self.keysHeldData[key] = KeyHoldData()
             self.keysHeldData[key].isDown = True
-            self.resetTextOffset()
+        self.resetTextOffset()
 
     def resetTextOffset(self):
         maxCursorX = self.left + self.width - self.padding
@@ -316,9 +248,8 @@ class TextBox(object):
         elif cursorX < minCursorX:
             self.textOffset += minCursorX - cursorX
 
-    def onKeyRelease(self, keyCode, mod):
-        key = keyNameMap.get(keyCode, None)
-        if key is not None and key in self.keysHeldData:
+    def onKeyRelease(self, key, is_named, modifiers):
+        if is_named and key in self.keysHeldData:
             data = self.keysHeldData[key]
             data.isDown = False
             data.delay = 400
@@ -346,10 +277,10 @@ class Button(object):
         self.width = self.height * 1.2
         self.left = self.centerX - (self.width / 2)
         self.right = self.centerX + (self.width / 2)
-        self.baseColor = (0.7, 0.6, 0.35, 1.0)
-        self.hoverColor = (0.75, 0.7, 0.5, 1.0)
+        self.baseColor = (0.35, 0.6, 0.7, 1.0)
+        self.hoverColor = (0.5, 0.7, 0.75, 1.0)
         self.color = self.baseColor
-        self.font = ('Arial', cairo.FONT_WEIGHT_NORMAL, cairo.FONT_SLANT_NORMAL)
+        self.font = ('Arial', wyvern.FontWeight.NORMAL, wyvern.FontSlant.NORMAL)
         self.textSize = 15
         self.text = 'OK'
 
@@ -410,32 +341,32 @@ class TextBoxModal(object):
         self.shadowShift = 2
 
         self.active = True
-        self.measureCtx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 0, 0))
-        self.dividerY = (
-            self.drawPrompt(self.measureCtx, simulate=True) + self.textYMargin
-        )
+        # can't make a surface whose dimensions are zero
+        self.measureCtx = wyvern.ImageSurface(100, 100).canvas
+        dividerY = self.drawPrompt(self.measureCtx, simulate=True)
+        self.dividerY = dividerY + self.textYMargin
         self.textBox = TextBox(self) if getInput else None
         self.button = Button(self)
 
         self.mouseIsDown = False
+        self.lastMousePosition = None
 
-        pygame.display.set_caption(self.title)
-        pygame.init()
-
-        self.run()
+        wyvern.run(
+            self.on_event,
+            int(self.width),
+            int(self.height),
+            False,
+            self.title,
+            False,
+            True,
+            # Set when running tests, so windows don't take focus
+            visible=not os.environ.get('CMU_GRAPHICS_HIDDEN_WINDOW'),
+        )
 
     def get_height(self):
         return (self.dividerY - self.top) + self.inputHeight
 
     height = property(get_height)
-
-    def redrawAll(self, screen, cairo_surface, ctx):
-        self.draw(ctx)
-        data_string = cairo_surface.get_data()
-        pygame_surface = pygame.image.frombuffer(
-            data_string, (int(self.width), int(self.height)), 'RGBA'
-        )
-        screen.blit(pygame_surface, (0, 0))
 
     def draw(self, ctx):
         ctx.save()
@@ -457,13 +388,13 @@ class TextBoxModal(object):
 
     def drawBox(self, ctx):
         ctx.set_source_rgba(1.0, 1.0, 1.0, 1.0)
-        roundedrec(ctx, self.left, self.top, self.width, self.height, 0, 0)
+        ctx.round_rectangle(self.left, self.top, self.width, self.height, 0, 0)
         ctx.fill()
 
         self.drawDivider(ctx)
 
     def drawPrompt(self, ctx, simulate=False):
-        ctx.select_font_face('Arial', cairo.FONT_WEIGHT_NORMAL, cairo.FONT_SLANT_NORMAL)
+        ctx.select_font_face('Arial', wyvern.FontWeight.NORMAL, wyvern.FontSlant.NORMAL)
         ctx.set_font_size(self.textSize)
 
         promptWords = self.prompt.split()
@@ -496,86 +427,66 @@ class TextBoxModal(object):
     def onStep(self):
         if self.textBox:
             self.textBox.onStep()
+            if self.mouseIsDown and self.lastMousePosition:
+                self.textBox.onMouseDrag(self.lastMousePosition)
 
     def execute(self):
         if self.textBox:
             print(''.join(self.textBox.buf), end='')
-        self.running = False
+        wyvern.quit()
 
-    def run(self):
-        self._msPassed = 0
-        self._refreshDelay = 60
-        self._stepsPerSecond = 30
+    def on_event(self, event, surface):
+        ctx = surface.canvas
 
-        clock = pygame.time.Clock()
+        if event.event_type == 'step':
+            self.onStep()
 
-        # Make antialiasing possible
-        screen = pygame.display.set_mode((int(self.width), int(self.height)))
-        cairo_surface = cairo.ImageSurface(
-            cairo.FORMAT_ARGB32, int(self.width), int(self.height)
-        )
-        ctx = cairo.Context(cairo_surface)
+        elif event.event_type == 'redraw':
+            self.draw(ctx)
 
-        self.running = True
-        lastMousePosition = None
-        while self.running:
-            self._msPassed += clock.tick(self._refreshDelay)
-            tickHadMouseDownEvent = False
-            for event in pygame.event.get():
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.button.onMousePress(event.pos)
+        elif event.event_type == 'mouse_press':
+            pos = (event.mouse.x, event.mouse.y)
+            if event.mouse.button == 0:
+                self.button.onMousePress(pos)
+                if self.textBox:
+                    if self.textBox.contains(*pos):
+                        self.textBox.focus()
+                    else:
+                        self.textBox.active = False
+                    if self.textBox.active:
+                        self.lastMousePosition = pos
+                        self.textBox.anchorPos = None
+                        self.textBox.cursorPos = self.textBox.cursorPosFromCoord(pos[0])
+                        self.mouseIsDown = True
 
-                    if self.textBox:
-                        if self.textBox.contains(*event.pos):
-                            self.textBox.focus()
-                        else:
-                            self.textBox.active = False
-                            self.cursorPos = None
+        elif event.event_type == 'mouse_release':
+            if event.mouse.button == 0:
+                self.lastMousePosition = (event.mouse.x, event.mouse.y)
+                self.mouseIsDown = False
 
-                        if self.textBox.active:
-                            lastMousePosition = event.pos
-                            self.textBox.anchorPos = None
-                            self.textBox.cursorPos = self.textBox.cursorPosFromCoord(
-                                event.pos[0]
-                            )
-                            tickHadMouseDownEvent = True
-                            self.mouseIsDown = True
-                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                    lastMousePosition = event.pos
-                    self.mouseIsDown = False
-                elif event.type == pygame.MOUSEMOTION and event.buttons == (0, 0, 0):
-                    self.button.onMouseMove(event.pos)
-                    lastMousePosition = event.pos
-                elif event.type == pygame.MOUSEMOTION and event.buttons[0] == 1:
-                    # On drag
-                    lastMousePosition = event.pos
-                    tickHadMouseDownEvent = True
-                    self.mouseIsDown = True
-                    if self.textBox:
-                        self.textBox.onMouseDrag(event.pos)
-                elif event.type == pygame.KEYDOWN:
-                    if self.textBox:
-                        self.textBox.onKeyPress(event.key, event.mod)
-                elif event.type == pygame.KEYUP:
-                    if self.textBox:
-                        self.textBox.onKeyRelease(event.key, event.mod)
-                elif event.type == pygame.QUIT:
-                    self.running = False
+        elif event.event_type == 'mouse_move':
+            pos = (event.mouse.x, event.mouse.y)
+            self.button.onMouseMove(pos)
+            self.lastMousePosition = pos
 
-            if (
-                self._msPassed > math.floor((1000 / self._stepsPerSecond))
-                or abs(self._msPassed - math.floor((1000 / self._stepsPerSecond))) < 10
-            ):
-                self._msPassed = 0
-                self.onStep()
-                if self.textBox and self.mouseIsDown and not tickHadMouseDownEvent:
-                    self.textBox.onMouseDrag(lastMousePosition)
+        elif event.event_type == 'mouse_drag':
+            pos = (event.mouse.x, event.mouse.y)
+            self.lastMousePosition = pos
+            if 0 in event.mouse.buttons and self.textBox:
+                self.mouseIsDown = True
+                self.textBox.onMouseDrag(pos)
 
-            self.redrawAll(screen, cairo_surface, ctx)
-            pygame.display.flip()
+        elif event.event_type == 'key_press':
+            if self.textBox:
+                self.textBox.onKeyPress(
+                    event.key.key, event.key.is_named, event.key.modifiers
+                )
 
-        pygame.display.quit()
-        pygame.quit()
+        elif event.event_type == 'key_release':
+            if self.textBox:
+                self.textBox.onKeyRelease(
+                    event.key.key, event.key.is_named, event.key.modifiers
+                )
 
 
 def main():
