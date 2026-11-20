@@ -66,14 +66,15 @@ def readSent(sentLine):
     
     if (sentLine == ''): #if the sent line is blank just return
         return
-    if (waitingForInput):
-        userInput = sentLine
-        pc -= 1
-        error = runProgram()
-        println('Enter a Value')
+    if (waitingForInput): #if something has been entered while the program is waiting for input, set the userInput to that and run the program
+        userInput = sentLine #set the user input to the sent line
+        pc -= 1 #decrement the program counter so that the ask command is executed again
+        error = runProgram()# run the program and get the error code
+        println('exited with error ' + str(error))# print the error code to the console
         
         return
-    if (sentLine[0] in numbers): # if we are saving a line to the program
+    
+    if (sentLine[0] in numbers): # if the command begins with a number we are saving a line to the program
         
         i = 1
         # find line number 
@@ -92,16 +93,17 @@ def readSent(sentLine):
         if(command[0] == 'run'): # the run program command
             pc = 0
             error = runProgram() #call runProgram and get the result
-            println('exited with error ' + str(error)) # print to the console
-            print(waitingForInput)
-            return
+            if (error == 4): return # if the program exited with waiting for input, don't print the error code
+            else:
+                println('exited with error ' + str(error)) # print to the console
+                return
             
         elif(command[0] == 'inspect'): # read code that has already been saved
             println('')
             for i in range(int(command[1]),int(command[2])+1,1): # for each line between operand 1 and 2
-                if (program[i] != None):
+                if (program[i] != None): # if the line is not empty print it to the console
                     println(str(i) + ' - ' + program[i]) # print that line of the program to the console
-                elif (program[i + 1] != None):
+                elif (program[i + 1] != None):# if the next line is not empty print the gap indicator to the console
                     println('~~~')
             println('~~~')
                 
@@ -114,7 +116,7 @@ def readSent(sentLine):
             for j in range(len(program)):
                 program[j] = None
                 
-        elif(command[0] == 'help'):
+        elif(command[0] == 'help'): # if the help command is entered print the help text
             println('Error Codes :')
             
             println('')
@@ -134,8 +136,15 @@ def readSent(sentLine):
             println('stop - Halts Execution')
             println('set a b - Sets the Value at a to b')
             println('ask a  - Sets the Value at 0 to whatever the use types')
+            println('print a - Prints a to the console')
+            println('prtMem a - Prints the value at memory address a')
+            println('jmp a - Jumps to line a')
+            println('jnz a b - Jumps to line b if the value at memory address a is not 0')
+            println('jiz a b - Jumps to line b if the value at memory address a is 0')
+            println('add a b c - Adds the values at a and b and stores the result at c')
+            println('sub a b c - Subtracts the value at a from the value at  b and stores the result at  c')
             
-        else:
+        else: # if the command is not recognized print an error message
             println("Unrecognized Command  -  Try 'help'")
             
             
@@ -157,6 +166,8 @@ def execute(line):
         
         instruction = line.split(' ') # split into tokens
         op = instruction[0] # opcode
+
+        #instuctions defined here
         
         if(op == 'stop'): # stop the program
             return 0
@@ -182,13 +193,12 @@ def execute(line):
             memory[int(instruction[3])] = int(memory[int(instruction[2])]) - int(memory[int(instruction[1])])
         elif(op == 'wait'): # wait for a set amount of time
             sleep(int(instruction[1]))
-        elif(op == 'ask'):
-            if (userInput == None):
+        elif(op == 'ask'):# ask th user for input
+            if (userInput == None):#if nothing has been entered, print the prompt set the waiting for input flag and return waiting for input
                 println(str(instruction[1]))
                 waitingForInput = True
                 return 4
-            else:
-                
+            else: # if something has been entered set the value at memory[0] to the user input and reset userInput and waitingForInput flag
                 memory[0] = userInput
                 userInput = None
                 waitingForInput = False
@@ -242,16 +252,15 @@ def newLine():
     currentLine = ''
     cursorPosition = 0
     
-def sendLine():
-    global sentLine
-    sentLine = currentLine
+
+
 
 # a few functions for the interpreter
 
 def printChars(chars):
     global currentLine
     currentLine+=chars
-    newLine()
+
     
 def println(chars):
     global currentLine
@@ -287,21 +296,22 @@ def onKeyPress(key):
     global currentLine
     global currentLineLabel
     global lines
+    global sentLine
     
     if (key in specialCharacters): # if  the key pressed is a special character do something special
         #print(key+" sp")
-        if(key == 'space'):
+        if(key == 'space'): # if the space key is pressed, add a space to the string and move the cursor forward one space
            currentLine += ' '
            cursorPosition += 1
-        elif(key == 'backspace'):
+        elif(key == 'backspace'):# if the backspace key is pressed, remove the last character from the string and move the cursor back one space    
             if (cursorPosition > 0):
                 currentLine = currentLine[:-1]
                 cursorPosition -= 1
         elif(key == 'tab'):
             currentLine += "\u0009"
             cursorPosition += 1
-        elif(key == 'enter'):
-            sendLine()
+        elif(key == 'enter'):#if the enter key is pressed, save the current line to sentLine and call readSent with that line, then create a new line
+            sentLine = currentLine
             
             readSent(sentLine)
             
@@ -310,7 +320,6 @@ def onKeyPress(key):
         
     else:
         currentLine += key # if it's not special add to string and advance the cursor
-        #print(key)
         cursorPosition += 1 # advance cursor
     
     
