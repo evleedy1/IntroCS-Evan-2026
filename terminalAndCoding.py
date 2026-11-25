@@ -1,9 +1,12 @@
 from cmu_graphics import *
+#set up window
 app.background = 'black'
+app.width = 400
+app.height = 400
 
 # a few constants for the terminal
 textSize = 12
-textWidth= 7.23
+textWidth= 7.23 # need to tweak, not actualy monospace font?
 font = 'monospace'
 
 # list of characters that when type don't return their chacrater
@@ -63,7 +66,8 @@ def readSent(sentLine):
     global waitingForInput
     global userInput
     global pc
-    
+    global lines
+
     if (sentLine == ''): #if the sent line is blank just return
         return
     if (waitingForInput): #if something has been entered while the program is waiting for input, set the userInput to that and run the program
@@ -109,8 +113,9 @@ def readSent(sentLine):
                 
                 
         elif(command[0] == 'clear'): # clears the console
-            for i in range(25): # fill console with newlines
-                newLine()
+            
+            for line in lines: # fill console with newlines
+                line.place += 1000
                 
         elif(command[0] == 'clearPRG'): # clear the program
             for j in range(len(program)):
@@ -146,6 +151,8 @@ def readSent(sentLine):
             
         else: # if the command is not recognized print an error message
             println("Unrecognized Command  -  Try 'help'")
+
+        
             
             
                 
@@ -239,24 +246,31 @@ def labelAtTopLeft(label,x,y): # postion label independent of contents
     label.top = y
     return label
 
-currentLineLabel = labelAtTopLeft(currentLineLabel,15 ,380) # fix position of start text
+currentLineLabel = labelAtTopLeft(currentLineLabel,15 ,app.height - 20) # fix position of start text
 
 # run when enter is pressed
 def newLine():
     global lines
     global currentLine
     global cursorPosition
-    lines.append(labelAtTopLeft(Label(currentLine,0,0,fill ='white',font = 'monospace'),15 ,380))
-    for line in lines:
-        line.centerY -= 15
-    currentLine = ''
-    cursorPosition = 0
+    temp = labelAtTopLeft(Label(currentLine,0,0,fill ='white',font = 'monospace'),15 ,app.height - 20)#create new label with the current line as it's value
+
+    temp.place = 1 # place the new line. .place is used to determine the vertical position of the line in the console
+
+    for line in lines: #for each line
+        line.place += 1 # increment it's place
+        line.centerY -= 15 # move it up
+    lines.append(temp) # add the new line to the list of lines
+    currentLine = '' # reset the current line to blank
+    cursorPosition = 0 #reset the cursor position to 0
     
 
 
 
 # a few functions for the interpreter
 
+
+# UNUSED
 def printChars(chars):
     global currentLine
     currentLine+=chars
@@ -284,7 +298,11 @@ def onStep():
         cursor.visible = True
     
     cursor.left = cursorPosition * textWidth + 11.4 # position based on characters typed
+
+    cursor.top = app.height - 20 # position at bottom of screen
     
+    for line in lines: # position all the lines
+        line.top = app.height - 20 - (line.place * 15) # adjust position based on place value and window height
     
     
     
@@ -324,7 +342,7 @@ def onKeyPress(key):
     
     
     currentLineLabel.value = currentLine #set the label value to string
-    currentLineLabel = labelAtTopLeft(currentLineLabel,15 ,380)# fix the label position because cmu graphis is stupid
+    currentLineLabel = labelAtTopLeft(currentLineLabel,15 ,app.height - 20)# fix the label position because cmu graphis is stupid
     
 
 
